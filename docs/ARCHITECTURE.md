@@ -1,6 +1,6 @@
 # 架构与代码结构
 
-更新于 2026-09-29。以代码为准；本文与代码冲突时以代码为准并修正本文。
+更新于 2026-10-04。以代码为准；本文与代码冲突时以代码为准并修正本文。
 
 ## 1. 总体设计
 
@@ -32,7 +32,7 @@
 │   ├── hermes_mobile/
 │   │   ├── main.py              应用装配：启动 Hermes 子进程、RPC/REST 客户端、事件转发任务
 │   │   ├── settings.py          配置（环境变量前缀 HERMES_BRIDGE_），Hermes 可执行文件自动查找
-│   │   ├── cli.py               命令行：serve / check-contract；生成 LaunchAgent plist
+│   │   ├── cli.py               命令行：serve / check-contract / pair（终端显示配对二维码并保存 PNG）；生成 LaunchAgent plist
 │   │   ├── auth.py              设备密钥认证（SHA-256 摘要 + 常量时间比较）
 │   │   ├── db.py                SQLite 表定义
 │   │   ├── hermes_process.py    启动/停止 `hermes serve`，通过就绪文件拿端口，校验 /api/status
@@ -48,6 +48,7 @@
 │   │   │   ├── catalog.py       模型列表；技能/工具/定时任务/Profile/消息平台/文件（只读）；目录浏览
 │   │   │   ├── uploads.py       附件上传（创建/分块/完成/附加）
 │   │   │   ├── cron.py, skills.py, skills_hub.py, tools.py, mcp.py   管理类接口（修改类操作走审计）
+│   │   │   ├── settings.py      档案设置：脱敏概览、白名单配置更新、提供商密钥只写（修改类操作走审计）
 │   │   │   ├── audit.py         操作记录（只读分页）
 │   │   │   ├── _audited.py      修改类操作的公共审计包装 `mutate`
 │   │   │   ├── bot_groups.py    桌面端机器人群聊（只读，App 正在使用）
@@ -62,7 +63,7 @@
 │   │       ├── bot_groups.py    解析桌面端群聊数据（profiles.list → default 的 ui_meta）
 │   │       ├── event_log.py     Hermes 事件 → 手机事件；事件日志与每台设备的游标
 │   │       └── approvals.py     审批记录：捕获、撤回、处理
-│   └── tests/                   pytest（1041 个）
+│   └── tests/                   pytest（1671 个）
 ├── android/app/src/main/java/app/hermes/mobile/
 │   ├── MainActivity.kt          入口；配对页（含替换已配对设备的确认）
 │   ├── HermesMobileApp.kt, AppState.kt
@@ -75,17 +76,19 @@
 │   │   ├── cron/                定时任务（含滚轮时间选择 SchedulePicker）
 │   │   ├── skills/              已安装技能 + Skills Hub
 │   │   ├── tools/               工具集与 MCP
+│   │   ├── settings/            Hermes 档案设置、审批关闭确认、API 密钥写入与只读配置概览
 │   │   ├── audit/               操作记录
 │   │   └── groups/              群聊：手机群聊（PhoneRooms*.kt，可操作）+ 桌面端群聊（只读）
 │   ├── security/                设备密钥加密存储
 │   ├── design/                  主题（浅色/深色/跟随系统）
 │   └── threads/
-│       ├── ThreadExperience.kt  主界面：侧边栏（长按任务：改名/归档/删除）、对话、审批卡片、输入框、附件卡片、工作目录选择、固定大小的模型弹窗、设置（含断开连接）
-│       ├── ThreadState.kt       纯函数状态：事件归并、模型按钮显示规则
+│       ├── ThreadExperience.kt  主界面：侧边栏（最近任务按今天/昨天/本周/更早分组；长按任务：改名/归档/删除；打开时收起键盘）、对话（Hermes 头像在消息框外左上方，运行中显示转圈）、审批卡片、输入框（框内“+”选图片/文件）、附件卡片、工作目录选择、固定大小的模型弹窗、设置（含 Hermes 设置、断开连接）
+│       ├── ThreadState.kt       纯函数状态：事件归并、模型按钮显示规则、最近任务按 updated_at 分组（groupRecentThreads）
 │       ├── ThreadViewModel.kt   请求编排、错误提示文案
 │       ├── ModelProviderExpansionStore.kt  模型弹窗里服务商的展开状态
 │       └── SidebarSplitStore.kt 侧边栏分割比例
-├── android/app/src/test/        JVM 单元测试（126 个）
+├── android/app/src/main/res/    App 名（Talaria）、自适应矢量图标（含单色层）
+├── android/app/src/test/        JVM 单元测试（204 个）
 ├── scripts/
 │   ├── install-mac.sh           安装/升级 Bridge 服务
 │   ├── uninstall-mac.sh         卸载服务（保留数据）
@@ -215,7 +218,7 @@ attach 再次校验，并复用 `ThreadService.resume()` 获取实时 ID。
 `📎 文件名`）并去掉警告。
 
 **Android 一侧**：`attachments/` 包 + `BridgeApi`（`createUpload`、`uploadChunks`、
-`completeUpload`、`attachUpload`）。系统文件选择器（`OpenDocument`）选文件，先流式算 SHA-256
+`completeUpload`、`attachUpload`）。输入框内的“+”菜单：图片走系统照片选择器（`PickVisualMedia`，仅图片），文件走系统文件选择器（`OpenDocument`）；选好后先流式算 SHA-256
 和真实大小，再按 ≤ 1 MiB 分块上传；输入框上方显示待发送附件卡片（进度、失败重试、
 未附加前可移除）。只支持已有任务（新任务尚无任务 ID）。发送时先 `attach`，普通文件的
 `ref_text` 追加到消息文本。`expires_at` 是小数秒，解析类型用 `Double`。
@@ -424,8 +427,60 @@ Android/真机端到端；Skills Hub install/uninstall 审计见第 9 节，MCP 
 | GET | `/v1/catalog/models` | 可用模型 |
 | GET | `/v1/catalog/{skills,tools,jobs,profiles,messaging,artifacts}` | Hermes 管理信息（只读） |
 | POST | `/v1/catalog/profiles` | 新建 Profile |
+| GET | `/v1/settings/profiles` | `{profiles: [{name, is_default}]}`，只返回档案标识，无 query 参数 |
+| GET | `/v1/settings?profile=default` | `{profile, overview, editable, providers}`，masked 概览、可编辑项和 API key 提供商认证布尔值 |
+| PUT | `/v1/settings/{key}?profile=default` | `{value, confirm?}`；返回写后重新读取的 editable 项 |
+| PUT | `/v1/settings/providers/{slug}/key?profile=default` | write-only `{api_key}`；返回 `{slug, authenticated}` |
 | WS | `/v1/events?after=` | 实时事件 |
 | GET | `/downloads/hermes.apk` | 下载 App |
+
+除档案列表外，Settings 的 `profile` 默认为 `default`，每次通过 RPC `profiles.list` 校验；未知档案为
+404 `profile_not_found`。`overview` 只转发 RPC `config.show {profile}` 的 `sections`
+（`title`、`rows`），由 Bridge 进一步脱敏；`providers` 从 `model.options` 只选
+`auth_type=api_key`，输出 `slug/name/authenticated`，不输出密钥、mask 或 env 元数据。
+
+- 概览的每个 row value 都移除绝对 URL 的 userinfo/query/fragment，保留 scheme/host/port/path；label 不区分大小写含 key/token/secret/password 时，仅保留 `****xxxx` 或 `(not set)`，其余替换为 `[已隐藏]`。
+- 档案列表排除 stripped 后为空或不区分大小写等于 `current` 的保留名（Hermes REST 会解析为自身档案，与 RPC 的具名档案语义不同）；设置读写在任何 RPC/REST 前返回 400 `profile_not_supported`，写入失败仍审计，Android 提示在 Mac 上改名。
+- 密钥在原有检查后仅允许无空格的 printable ASCII `0x21–0x7E`（Hermes 会把非 ASCII 凭据字符打印到 stderr），Bridge 返回不回显输入的 400 `invalid_settings_request` 且不调用上游；Android 发送前提示「密钥只能包含英文字母、数字和符号，请重新从服务商后台复制。」并清空密钥。
+
+24b9f0f8 的 schema/defaults 白名单只有 `approvals.mode`（manual/smart/off）、
+`approvals.timeout`（整数 10–600 秒）、`curator.stale_after_days` 和
+`curator.archive_after_days`（整数 1–365，archive ≥ stale）。`off` 每次都要求
+`confirm: true`，否则 409 `confirm_required`；其他键为 400 `setting_not_editable`，
+值不合法为 400 `invalid_setting_value`。`agent.reasoning_effort`、`display.tool_progress`
+虽有运行时支持，但不在当前 schema/defaults 中，因此未开放。写入通过
+`PUT /api/config?profile=…` 的 `{config: {section: {leaf: value}}}`，只发送一个叶子；
+Hermes 深度合并并保留 YAML 顺序/注释，随后 GET 回读。Bridge 串行化自身设置写入以保护
+curator 关系；Hermes API 没有跨客户端 compare-and-swap，桌面端并发修改仍需另行协调。
+保存仍会经过 Hermes 的 canonicalization：旧版根级 `max_turns`、模型别名等可能迁移到
+规范位置，不能承诺其他字段的磁盘表示逐字不变。RPC `config.set` 也使用同一保存逻辑，
+且不支持 timeout/curator 键，因此保留具有锁和深度合并保护的部分 REST 更新。
+
+**密钥保存（decision-02）：** `model.save_key` 的参数不允许 `profile`，因此从
+`model.options {profile, include_unconfigured: true}` 查找
+指定 slug，要求 `auth_type=api_key`；未知/非 API key 提供商返回 404 `provider_not_found`。
+`key_env` 只能来自 Hermes inventory，必须匹配 `^[A-Z][A-Z0-9_]{0,127}$`，缺失或不合法
+返回 409 `settings_key_save_unsupported`，手机不能指定 env 名称。调用
+`PUT /api/env?profile=…`，JSON 仅含 `{key: key_env, value: api_key, profile, provider_setup: true}`。
+Hermes 在线程内绑定档案的 home/secret scope，再调用 `save_provider_env_credential`；它会写
+该档案 `.env`、轮换旧值的 config.yaml 镜像、解除对应 env 凭据来源的 suppression 并刷新
+凭据池（auth.json），不只是单独写 `.env`。`provider_setup` 还会记录新的/变化的 provider setup；
+Hermes 拒绝保存显示用的 redacted preview，锁定/禁止写入的 env 也仍由 Hermes 拒绝。
+
+Bridge 完全丢弃此次 REST 成功响应，不解析正文；错误正文也不进入 `HermesApiError` 消息，
+手机错误只包含稳定代码。之后再次查询同一档案的 `model.options`，只返回 `{slug, authenticated}`，
+不把保存成功直接等同于认证成功。请求用 `SecretStr`，拒绝空白、超过 4096 字符和 NUL/换行；
+不记录 JSON body、密钥或 env 值，不调用 `GET /api/env`、reveal、DELETE 或 `model.save_key`，
+没有 reveal/delete/disconnect 端点。保存后回读失败时返回 503；已完成的密钥写入不自动重试。
+
+两种修改均经 `_audited.mutate`：`settings.update` 的 target 为 `<profile>:<key>`，
+`settings.provider_key.save` 为 `<profile>:<slug>`；审计只有标识和稳定错误码，无值。
+`SETTINGS_ROUTES` 登记 REST；`check-contract` 覆盖使用的 RPC 和嵌套结果字段，
+REST 部分由 `test_settings.py` 的 fake RPC/REST 测试约束。
+
+Android 入口为“设置 → Hermes 设置”对话框。2026-10-04 已通过隔离临时 Bridge 验证
+真实 Hermes 的读取、非法请求拒绝、不改变值的超时写入（`config.yaml` 字节不变）和审计记录；
+真实 API 密钥保存未测（没有测试凭据），手机真机操作待确认。
 
 错误统一为 `{"detail": {"code", "message"}}`，App 按 `code` 显示中文提示：
 

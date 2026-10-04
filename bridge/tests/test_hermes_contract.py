@@ -49,6 +49,8 @@ def _compatible_document() -> dict[str, object]:
         key = name + "_request"
         schemas[key] = _object(*(fields - {"session_id"}))
         requests.append({"name": name, "params": [{"name": "params", "schema": _ref(key)}]})
+    for name, fields in hermes_contract.RPC_RESULT_OBJECTS.items():
+        schemas[name] = _object(*fields)
     return {
         "methods": methods,
         "x-notifications": notifications,
@@ -82,6 +84,18 @@ def test_check_contract_names_each_incompatibility() -> None:
     assert "event message.delta: payload fields removed: text" in problems
     assert "event session.title: missing" in problems
     assert "method session.close: missing" in problems
+
+
+@pytest.mark.parametrize("schema,field", [
+    ("ProfileRow", "name"), ("ProfileRow", "is_default"), ("ConfigSection", "title"),
+    ("ConfigSection", "rows"), ("ModelOptionProvider", "slug"), ("ModelOptionProvider", "name"),
+    ("ModelOptionProvider", "auth_type"), ("ModelOptionProvider", "authenticated"),
+    ("ModelOptionProvider", "key_env"),
+])
+def test_check_contract_checks_settings_nested_fields(schema, field) -> None:
+    document = _compatible_document()
+    del document["components"]["schemas"][schema]["properties"][field]
+    assert f"result schema {schema}: fields removed: {field}" in check_contract(document)
 
 
 def test_manifest_is_compatible_with_installed_hermes() -> None:

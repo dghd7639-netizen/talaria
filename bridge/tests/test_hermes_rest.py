@@ -99,3 +99,30 @@ async def test_rest_rejects_unsafe_paths_oversize_and_sanitizes_errors() -> None
 
     with pytest.raises(ValueError, match="loopback"):
         HermesRestClient(HermesConnection("http://example.com:80", "token"))
+
+
+@pytest.mark.asyncio
+async def test_rest_can_discard_write_only_success_body_without_parsing(caplog) -> None:
+    import logging
+
+    caplog.set_level(logging.DEBUG)
+    sentinel = "private-key-sentinel"
+    response = FakeResponse(content=sentinel.encode(), headers={"content-length": "not-a-number"})
+
+    def must_not_parse():
+        raise AssertionError("Write-only response must not be parsed")
+
+    response.json = must_not_parse
+    http = FakeHttpClient(response)
+    client = HermesRestClient(HermesConnection("http://127.0.0.1:41234", "internal-token"), client=http)
+    body = {"key": "OPENAI_API_KEY", "value": sentinel, "profile": "work", "provider_setup": True}
+    assert await client.request("PUT", "/api/env?profile=work", json=body, discard_response=True) is None
+    assert http.calls == [("PUT", "/api/env?profile=work", body)]
+    assert sentinel not in caplog.text
+
+    http.response = FakeResponse(status_code=403, content=sentinel.encode())
+    with pytest.raises(HermesApiError) as error:
+        await client.request("PUT", "/api/env?profile=work", json=body, discard_response=True)
+    assert error.value.status_code == 403
+    assert sentinel not in str(error.value)
+    assert sentinel not in caplog.text

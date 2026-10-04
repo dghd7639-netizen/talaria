@@ -24,6 +24,7 @@ from hermes_mobile.routes.skills import router as skills_router
 from hermes_mobile.routes.skills_hub import HubState, router as skills_hub_router
 from hermes_mobile.routes.tools import router as tools_router
 from hermes_mobile.routes.mcp import router as mcp_router
+from hermes_mobile.routes.settings import router as settings_router
 from hermes_mobile.routes.audit import router as audit_router
 from hermes_mobile.routes.uploads import router as uploads_router
 from hermes_mobile.routes.groups import router as groups_router
@@ -101,6 +102,7 @@ def create_app(
         app.state.thread_service = None
         app.state.approval_service = None
         app.state.skills_hub = HubState()
+        app.state.settings_lock = asyncio.Lock()
         app.state.event_log = EventLog(bridge_database)
         event_task = None
         watchdog_task = None
@@ -202,6 +204,7 @@ def create_app(
     app.include_router(skills_hub_router)
     app.include_router(tools_router)
     app.include_router(mcp_router)
+    app.include_router(settings_router)
     app.include_router(audit_router)
     app.include_router(uploads_router)
     app.include_router(groups_router)

@@ -98,6 +98,9 @@ import androidx.compose.material3.LinearProgressIndicator
 import app.hermes.mobile.management.tools.ToolsDialog
 import app.hermes.mobile.management.tools.ToolsViewModel
 import app.hermes.mobile.management.tools.ToolsViewModelFactory
+import app.hermes.mobile.management.settings.HermesSettingsDialog
+import app.hermes.mobile.management.settings.HermesSettingsViewModel
+import app.hermes.mobile.management.settings.HermesSettingsViewModelFactory
 import app.hermes.mobile.management.skills.SkillsDialog
 import app.hermes.mobile.management.skills.SkillsViewModel
 import app.hermes.mobile.management.skills.SkillsViewModelFactory
@@ -157,6 +160,7 @@ fun ThreadExperience(
     var cronOpen by remember(connection) { mutableStateOf(false) }
     var groupsOpen by remember(connection) { mutableStateOf(false) }
     var auditOpen by remember(connection) { mutableStateOf(false) }
+    var hermesSettingsOpen by remember(connection) { mutableStateOf(false) }
     val factory = remember(connection) {
         ThreadViewModelFactory(
             api,
@@ -196,6 +200,11 @@ fun ThreadExperience(
         key = "tools-${connectionViewModelKey(connection.deviceSecret)}", factory = toolsFactory,
     )
     if (toolsOpen) ToolsDialog(toolsViewModel) { toolsOpen = false }
+    val settingsFactory = remember(api) { HermesSettingsViewModelFactory(api) }
+    val settingsViewModel: HermesSettingsViewModel = viewModel(
+        key = "settings-${connectionViewModelKey(connection.deviceSecret)}", factory = settingsFactory,
+    )
+    if (hermesSettingsOpen) HermesSettingsDialog(settingsViewModel) { hermesSettingsOpen = false }
     val state by viewModel.state.collectAsState()
     ThreadScreen(
         state = state,
@@ -231,6 +240,7 @@ fun ThreadExperience(
         onApproval = viewModel::resolveApproval,
         onDisconnect = onAuthenticationExpired,
         onAudit = { auditOpen = true },
+        onHermesSettings = { hermesSettingsOpen = true },
         themeMode = themeMode,
         onThemeMode = onThemeMode,
     )
@@ -267,6 +277,7 @@ private fun ThreadScreen(
     onApproval: (String) -> Unit,
     onDisconnect: () -> Unit,
     onAudit: () -> Unit,
+    onHermesSettings: () -> Unit,
     themeMode: ThemeMode,
     onThemeMode: (ThemeMode) -> Unit,
 ) {
@@ -400,6 +411,10 @@ private fun ThreadScreen(
                             Text(label)
                         }
                     }
+                    OutlinedButton(
+                        onClick = { settingsOpen = false; onHermesSettings() },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("Hermes 设置") }
                     OutlinedButton(
                         onClick = { settingsOpen = false; onAudit() },
                         modifier = Modifier.fillMaxWidth(),

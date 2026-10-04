@@ -117,6 +117,12 @@ hermes update --backup --yes --no-gateway-restart
 
 （`--backup` 会生成完整备份 `~/.hermes/backups/pre-update-*.zip`，还原用 `hermes import <zip>`。升级前另外手工备份 `config.yaml`、`.env` 和各档案的 `config.yaml` 更稳妥。升级耗时和备份大小取决于本机数据与依赖。）
 
+`--no-gateway-restart` 会延后消息网关重启（提示 `Gateway restart deferred`）；仍在运行的网关会继续使用旧代码。若消息网关由 LaunchAgent `ai.hermes.gateway` 管理，升级完成后手动重启：
+
+```bash
+launchctl kickstart -k gui/$UID/ai.hermes.gateway
+```
+
 升级后：
 
 ```bash

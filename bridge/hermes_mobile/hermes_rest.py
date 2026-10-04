@@ -33,16 +33,25 @@ class HermesRestClient:
         )
 
     async def request(
-        self, method: str, path: str, *, json: object | None = None
+        self, method: str, path: str, *, json: object | None = None,
+        discard_response: bool = False,
     ) -> object:
         if not path.startswith("/api/") or path.startswith("//"):
             raise ValueError("Hermes REST path must be an explicit /api/ path")
 
         response = await self.client.request(method, path, json=json)
         if not response.is_success:
+            if discard_response:
+                # Upstream credential errors may echo the submitted value.
+                raise HermesApiError(response.status_code, "Hermes credential write rejected")
             message = response.content[:4096].decode("utf-8", errors="replace")
             message = message.replace(self.connection.session_token, "[redacted]")
             raise HermesApiError(response.status_code, message)
+
+        if discard_response:
+            # Write-only credentials need only HTTP success; never parse or
+            # propagate an upstream response that may contain secret material.
+            return None
 
         content_length = int(response.headers.get("content-length", "0") or 0)
         actual_length = len(response.content)

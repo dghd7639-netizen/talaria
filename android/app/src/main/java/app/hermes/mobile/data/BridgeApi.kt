@@ -12,6 +12,8 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.intOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -174,6 +176,49 @@ class BridgeApi(
             decoder = phoneJson,
             httpClient = phoneWriteClient,
         ).toDomain()
+    }
+
+    fun settingsProfiles(): SettingsProfilesDto =
+        cronExecute(Request.Builder().url(url("v1", "settings", "profiles")))
+
+    fun settings(profile: String): HermesSettingsDto =
+        cronExecute(Request.Builder().url(settingsUrl(profile)))
+
+    fun updateSetting(profile: String, key: String, value: JsonPrimitive, confirm: Boolean = false): EditableSettingDto {
+        require(key.matches(Regex("^[A-Za-z][A-Za-z0-9_.]{0,199}$")))
+        require(value.isString || value.intOrNull != null)
+        return cronExecute(Request.Builder().url(settingsUrl(profile, key))
+            .put(cronJson.encodeToString(SettingUpdateRequest(value, confirm)).toRequestBody(JSON_MEDIA)),
+            httpClient = phoneWriteClient)
+    }
+
+    fun saveProviderKey(profile: String, slug: String, apiKey: ProviderApiKey): SettingsProviderSavedDto {
+        try {
+            require(slug.isNotBlank() && slug != "." && slug != "..")
+            val value = apiKey.requestValue()
+            require(value.isNotBlank() && value.codePointCount(0, value.length) <= 4096 &&
+                value.none { it == '\u0000' || it == '\r' || it == '\n' })
+            require(apiKey.printableAscii)
+            return cronExecute(Request.Builder().url(settingsUrl(profile, "providers", slug, "key"))
+                .put(cronJson.encodeToString(ProviderKeyRequest(value)).toRequestBody(JSON_MEDIA)),
+                httpClient = phoneWriteClient)
+        } catch (error: BridgeRequestException) {
+            // Never propagate an unexpected, potentially secret-bearing server code.
+            val code = error.code?.takeIf { it in SETTINGS_KEY_ERROR_CODES }
+            throw BridgeRequestException(error.status, code)
+        } catch (_: Exception) {
+            // Transport/decoder errors can contain the request or echoed response.
+            throw IOException("Unable to save provider key")
+        } finally {
+            apiKey.clear()
+        }
+    }
+
+    private fun settingsUrl(profile: String, vararg segments: String): okhttp3.HttpUrl {
+        require(profile.isNotBlank())
+        return connection.baseUrl.newBuilder().addPathSegments("v1/settings").apply {
+            segments.forEach(::addPathSegment)
+        }.addQueryParameter("profile", profile).build()
     }
 
     fun toolsets(): List<ToolsetDto> = cronExecute(Request.Builder().url(url("v1", "tools", "toolsets")))
@@ -552,6 +597,8 @@ class BridgeApi(
         val CRON_UPDATE_FIELDS = setOf("schedule", "name", "prompt", "deliver", "skills", "skill",
             "model", "provider", "workdir", "context_from", "enabled_toolsets", "failure_deliver")
         val HUB_SOURCE_REGEX = Regex("^[a-zA-Z0-9_-]+$")
+        val SETTINGS_KEY_ERROR_CODES = setOf("provider_not_found", "profile_not_found", "profile_not_supported",
+            "settings_key_save_unsupported", "invalid_settings_request", "hermes_rejected", "hermes_unavailable")
         const val MAX_CHUNK_SIZE = 1024 * 1024
         val JSON_MEDIA = "application/json".toMediaType()
     }
@@ -592,6 +639,58 @@ private data class CreateThreadRequest(
 
 class BridgeRequestException(val status: Int, val code: String?) :
     Exception("Bridge request failed: $status ${code.orEmpty()}".trim())
+
+@Serializable
+data class SettingsProfilesDto(val profiles: List<SettingsProfileDto>)
+
+@Serializable
+data class SettingsProfileDto(val name: String, @SerialName("is_default") val isDefault: Boolean)
+
+@Serializable
+data class HermesSettingsDto(
+    val profile: String,
+    val overview: List<SettingsOverviewDto>,
+    val editable: List<EditableSettingDto>,
+    val providers: List<SettingsProviderDto>,
+)
+
+@Serializable
+data class SettingsOverviewDto(val title: String, val rows: List<List<String>>)
+
+@Serializable
+data class EditableSettingDto(
+    val key: String,
+    val type: String,
+    val value: JsonPrimitive,
+    val choices: List<String>? = null,
+    val min: Int? = null,
+    val max: Int? = null,
+    @SerialName("confirm_values") val confirmValues: List<JsonPrimitive> = emptyList(),
+)
+
+@Serializable
+data class SettingsProviderDto(val slug: String, val name: String, val authenticated: Boolean)
+
+@Serializable
+data class SettingsProviderSavedDto(val slug: String, val authenticated: Boolean)
+
+/** Consumed by a single request; excluded from ViewModel and saved UI state. */
+class ProviderApiKey(value: String) {
+    private val characters = value.toCharArray()
+    internal fun requestValue(): String = characters.concatToString()
+    internal val printableAscii: Boolean get() = characters.all { it in '!'..'~' }
+    fun clear() { characters.fill('\u0000') }
+    internal val cleared: Boolean get() = characters.all { it == '\u0000' }
+    override fun toString(): String = "ProviderApiKey([REDACTED])"
+}
+
+@Serializable
+private data class SettingUpdateRequest(val value: JsonPrimitive, val confirm: Boolean)
+
+@Serializable
+private class ProviderKeyRequest(@SerialName("api_key") val apiKey: String) {
+    override fun toString(): String = "ProviderKeyRequest([REDACTED])"
+}
 
 @Serializable private data class ModelOptionsDto(val items: List<ModelOptionDto>)
 @Serializable private data class ModelOptionDto(

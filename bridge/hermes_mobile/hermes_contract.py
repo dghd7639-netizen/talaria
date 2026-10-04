@@ -67,6 +67,18 @@ MCP_ROUTES = {
     "test": ("POST", "/api/mcp/servers/{name}/test"),
 }
 
+# Profile config REST (web_routers/config_env.py). GET may contain secrets:
+# routes/settings.py only extracts the four whitelisted leaves. PUT takes
+# {config: {section: {leaf: value}}} and deep-merges over disk. Fake REST tests
+# pin the profile query, partial body and ok response; OpenRPC covers RPC only.
+# Key saves take {key, value, profile, provider_setup}; key is derived from
+# model.options.key_env, and the REST response is discarded without parsing.
+SETTINGS_ROUTES = {
+    "read": ("GET", "/api/config"),
+    "update": ("PUT", "/api/config"),
+    "save_key": ("PUT", "/api/env"),
+}
+
 # Client→server methods: every params key the Bridge may send.
 RPC_METHODS: dict[str, frozenset[str]] = {
     "profiles.list": frozenset({"include_sessions"}),
@@ -85,8 +97,9 @@ RPC_METHODS: dict[str, frozenset[str]] = {
     "session.close": frozenset({"session_id"}),
     "prompt.submit": frozenset({"session_id", "text"}),
     "config.set": frozenset({"session_id", "key", "value"}),
+    "config.show": frozenset({"profile"}),
     "approval.respond": frozenset({"session_id", "request_id", "choice"}),
-    "model.options": frozenset({"explicit_only", "refresh"}),
+    "model.options": frozenset({"explicit_only", "refresh", "profile", "include_unconfigured"}),
     "image.attach_bytes": frozenset({"session_id", "content_base64", "filename"}),
     "pdf.attach": frozenset({"session_id", "content_base64", "filename"}),
     "file.attach": frozenset({"session_id", "data_url", "name"}),
@@ -95,6 +108,8 @@ RPC_METHODS: dict[str, frozenset[str]] = {
 # Result keys the Bridge reads from a method result.
 RPC_RESULTS: dict[str, frozenset[str]] = {
     "profiles.list": frozenset({"profiles"}),
+    "config.show": frozenset({"sections"}),
+    "model.options": frozenset({"providers"}),
     "groups.capabilities": frozenset({"driver", "features"}),
     "groups.list": frozenset({"rooms", "next_offset"}),
     "groups.create": frozenset({"room"}),
@@ -109,6 +124,14 @@ RPC_RESULTS: dict[str, frozenset[str]] = {
     "image.attach_bytes": frozenset({"attached"}),
     "pdf.attach": frozenset({"attached"}),
     "file.attach": frozenset({"attached", "ref_text"}),
+}
+
+# Nested rows consumed by the settings API. OpenRPC names these schemas;
+# checking their fields also covers the metadata we deliberately strip.
+RPC_RESULT_OBJECTS: dict[str, frozenset[str]] = {
+    "ProfileRow": frozenset({"name", "is_default"}),
+    "ConfigSection": frozenset({"title", "rows"}),
+    "ModelOptionProvider": frozenset({"slug", "name", "auth_type", "authenticated", "key_env"}),
 }
 
 # ``event`` notifications: Hermes type -> payload keys the Bridge reads (and forwards to the phone).
@@ -218,6 +241,11 @@ def check_contract(openrpc: Mapping[str, object]) -> list[str]:
         # session_id is added to every request frame by the transport, not the params model.
         if gone := sorted(fields - props - {"session_id"}):
             problems.append(f"server request {name}: params fields removed: {', '.join(gone)}")
+
+    for name, fields in RPC_RESULT_OBJECTS.items():
+        props, _ = _object_shape([schemas.get(name)], schemas)
+        if gone := sorted(fields - props):
+            problems.append(f"result schema {name}: fields removed: {', '.join(gone)}")
 
     return problems
 
